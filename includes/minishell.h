@@ -1,0 +1,199 @@
+/* ************************************************************************** */
+/*                                                                            */
+/*                                                        :::      ::::::::   */
+/*   minishell.h                                        :+:      :+:    :+:   */
+/*                                                    +:+ +:+         +:+     */
+/*   By: maalonso <maalonso@student.42madrid.com    +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2026/03/19 12:48:50 by maalonso          #+#    #+#             */
+/*   Updated: 2026/03/19 13:12:16 by maalonso         ###   ########.fr       */
+/*                                                                            */
+/* ************************************************************************** */
+
+#ifndef MINISHELL_H
+# define MINISHELL_H
+
+# define _POSIX_C_SOURCE 200809L
+
+# include "../libft/libft.h"
+# include <errno.h>
+# include <limits.h>
+# include <readline/history.h>
+# include <readline/readline.h>
+# include <signal.h>
+# include <stdio.h>
+# include <stdlib.h>
+# include <sys/wait.h>
+# include <unistd.h>
+
+extern int			g_signal;
+
+//* Tokens Types
+
+typedef enum e_token_type
+{
+	TOKEN_WORD,
+	TOKEN_PIPE,
+	TOKEN_REDIR_IN,
+	TOKEN_REDIR_OUT,
+	TOKEN_REDIR_APPEND,
+	TOKEN_HEREDOC
+}					t_token_type;
+
+//* Tokens Structure
+
+typedef struct s_token
+{
+	t_token_type	type;
+	char			*value;
+	struct s_token	*next;
+}					t_token;
+
+//* Redirection types
+
+typedef enum e_redir_type
+{
+	REDIR_IN,
+	REDIR_OUT,
+	REDIR_APPEND,
+	REDIR_HEREDOC
+}					t_redir_type;
+
+//* Redirection structure
+
+typedef struct s_redir
+{
+	t_redir_type	type;
+	char			*file;
+	struct s_redir	*next;
+}					t_redir;
+
+//* Command structure
+
+typedef struct s_cmd
+{
+	char			**args;
+	t_redir			*redirects;
+	struct s_cmd	*next;
+}					t_cmd;
+
+typedef struct s_env_ctx
+{
+	char			**envp;
+	int				last_exit_status;
+}					t_env_ctx;
+
+//* Signals
+
+void				handle_sigint(int sig);
+void				setup_signals(void);
+
+//* Lexer
+
+t_token				*lexer(char *input, t_env_ctx *ctx);
+t_token				*extract_token(char *str, int *index, t_env_ctx *ctx);
+char				*extract_word(char *str, int *i, t_env_ctx *ctx);
+int					extract_plain(const char *s, int *i, char **out,
+						t_env_ctx *ctx);
+int					extract_quoted(const char *s, int *i, char **out,
+						t_env_ctx *ctx);
+int					skip_spaces(char *str, int i);
+int					is_operator(char c);
+int					append_env_var(const char *s, int *i, char **result,
+						t_env_ctx *ctx);
+int					append_exit_status(char **result, int last_exit_status);
+int					append_text(char **result, const char *text);
+
+//* Parser
+
+t_cmd				*parser(t_token *tokens);
+t_cmd				*create_cmd(void);
+t_cmd				*parse_one_cmd(t_token *tokens);
+t_redir				*create_redir(t_redir_type type, char *file);
+void				add_redir_to_cmd(t_cmd *cmd, t_redir *new_redir);
+int					count_words_until_pipe(t_token *tokens);
+char				**fill_args(t_token *tokens);
+t_token				*next_pipe(t_token *tokens);
+t_redir_type		token_to_redir_type(t_token_type type);
+
+//*Executor
+
+int					execute(t_cmd *cmd, char ***envp);
+int					execute_simple(t_cmd *cmd, char ***envp);
+int					execute_pipeline(t_cmd *cmd, char ***envp);
+int					execute_external(t_cmd *cmd, char **envp);
+void				resolve_heredocs(t_cmd *cmd, char **envp);
+void				child_pipeline(t_cmd *cmd, int prev_fd, int *pipe_fd,
+						char ***envp);
+int					wait_all(int num_cmds);
+int					fork_and_pipe(t_cmd *cmd, int *pipe_fd, int *prev_fd,
+						char ***envp);
+int					get_exit_status(int status);
+
+//* Builtins
+
+int					is_builtin(const char *cmd);
+int					exec_builtin(t_cmd *cmd, char ***envp);
+int					builtin_echo(char **args);
+int					builtin_pwd(void);
+int					builtin_env(char **envp);
+int					builtin_cd(char **args, char ***envp);
+int					builtin_export(char **args, char ***envp);
+int					builtin_unset(char **args, char ***envp);
+int					builtin_exit(char **args);
+
+//* Paths
+
+int					resolve_via_path(const char *cmd, char **envp,
+						char **out_path);
+int					resolve_direct_path(const char *cmd, char **out_path);
+const char			*get_env_value(char **envp, const char *key);
+int					scan_dirs_tokens(char **dirs, size_t tokens,
+						const char *cmd, char **out_path);
+int					build_and_check(char *dir, const char *cmd,
+						char **out_path);
+char				*build_candidate(char *dir, const char *cmd);
+int					has_slash(const char *s);
+
+//* Redirections
+
+int					apply_redirections(t_redir *redirects, int has_cmd,
+						char **envp, int last_exit_status);
+char				*read_heredoc(char *delimiter, int has_cmd, char **envp,
+						int last_exit_status);
+void				write_expanded(int fd, char *expanded);
+char				*append_char(char *result, char c);
+char				*append_str(char *result, char *value);
+char				*resolve_var(const char *line, int *i, char **envp,
+						int last_exit_status);
+int					apply_redir_in(const char *file);
+int					apply_one_redir(t_redir *r, int has_cmd, char **envp,
+						int last_exit_status);
+int					apply_heredoc(t_redir *r, int has_cmd, char **envp,
+						int last_exit_status);
+int					apply_redir_out(const char *file, int flags);
+
+//* Memory
+
+void				free_cmd_list(t_cmd *cmd);
+void				free_redir_list(t_redir *redir);
+void				free_tokens(t_token *tokens);
+void				free_string_array(char **arr);
+
+//* Shell Utils
+
+int					shell_execution(char **shell_env, int last_exit_status);
+void				shell_welcome(void);
+int					process_input(char *input, char ***envp,
+						int last_exit_status);
+void				free_envp_copy(char **envp);
+char				**dup_envp(char **envp);
+int					env_count(char **envp);
+int					env_size(char **envp);
+
+//* Errors
+
+int					print_error(const char *str);
+void				print_cmd_error(const char *cmd, const char *msg);
+
+#endif
